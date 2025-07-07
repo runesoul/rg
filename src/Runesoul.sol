@@ -690,7 +690,7 @@ contract Runesoul is Ownable2Step, AccessControl {
         path[1] = token;
         uint[] memory amountOut = pancakeRouter.swapExactTokensForTokens(
             amountPairedOut[0] / 2,
-            (estAmountOut * 88) / 100,
+            (estAmountOut * 70) / 100,
             path,
             address(this),
             deadline

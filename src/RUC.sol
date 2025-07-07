@@ -16,7 +16,7 @@ interface IPancakePair {
     function sync() external;
 }
 
-contract IFT {
+contract RUC {
     string public name = "RUC";
     string public symbol = "RUC";
     uint8 public decimals = 18;

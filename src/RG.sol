@@ -12,7 +12,7 @@ interface IPancakeRouter {
     function factory() external pure returns (address);
 }
 
-contract IFT {
+contract RG {
     string public name = "RG";
     string public symbol = "RG";
     uint8 public decimals = 18;
