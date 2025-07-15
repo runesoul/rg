@@ -475,30 +475,6 @@ contract Runesoul is Ownable2Step, AccessControl {
         emit TokenRemoved(msg.sender, token, block.timestamp);
     }
 
-    function userAddToken(address token, uint256 minDeposit) external payable {
-        require(msg.value == userTokenFee, "Must pay exact user token fee");
-        require(!supportedTokens[token].isSupported, "Token already supported");
-        require(token != address(0), "Invalid token address");
-
-        supportedTokens[token] = TokenInfo({
-            isSupported: true,
-            minDeposit: minDeposit
-        });
-        tokenList.push(token);
-
-        // Transfer fee to fee wallet
-        (bool success, ) = feeWallet.call{value: msg.value}("");
-        require(success, "Fee transfer failed");
-
-        emit UserTokenAdded(
-            msg.sender,
-            token,
-            minDeposit,
-            msg.value,
-            block.timestamp
-        );
-    }
-
     function userRemoveToken(address token) external payable {
         require(msg.value == userTokenFee, "Must pay exact user token fee");
         require(supportedTokens[token].isSupported, "Token not supported");
