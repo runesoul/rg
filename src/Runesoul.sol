@@ -109,6 +109,7 @@ event PairedTokenMinted(
     uint256 amountIn,
     address pairedTokenAddress,
     uint256 amountOut,
+    string signContext,
     bytes signature
 );
 
@@ -118,7 +119,14 @@ event PairedTokenRewardsClaimed(
     uint256 tokenAmountOut,
     address pairedTokenAddress,
     uint256 pairedTokenAmountOut,
+    string signContext,
     bytes signature
+);
+
+event TokenBought(
+    address indexed user,
+    address indexed token,
+    uint256 tokenAmountOut
 );
 
 interface IPancakeRouter {
@@ -150,11 +158,14 @@ contract Runesoul is Ownable2Step, AccessControl {
     struct TokenInfo {
         bool isSupported;
         uint256 minDeposit;
+        bool withdrawable;
     }
 
     struct PancakeSwapInfo {
         bool isSupported;
         address pairedToken;
+        uint256 buyFeePercent;
+        bool buySupported;
     }
 
     uint256 constant BPS = 10000;
@@ -186,7 +197,7 @@ contract Runesoul is Ownable2Step, AccessControl {
     mapping(address => uint256) public playerWithdrawRequest; // user => withdrawId
     mapping(uint256 => Withdraw) public withdraws;
 
-    uint256 public userTokenFee = 0.5 ether; // Default 0.5 BNB fee for user token operations
+    mapping(string => bool) public usedSignContexts;
 
     constructor(
         address[] memory _gameTokens,
@@ -205,7 +216,8 @@ contract Runesoul is Ownable2Step, AccessControl {
         for (uint256 i = 0; i < _gameTokens.length; i++) {
             supportedTokens[_gameTokens[i]] = TokenInfo({
                 isSupported: true,
-                minDeposit: _minDeposits[i]
+                minDeposit: _minDeposits[i],
+                withdrawable: true
             });
             tokenList.push(_gameTokens[i]);
         }
@@ -235,7 +247,11 @@ contract Runesoul is Ownable2Step, AccessControl {
     }
 
     function withdrawRequest(address token, uint256 amount) external {
-        require(supportedTokens[token].isSupported, "Token not supported");
+        require(
+            supportedTokens[token].isSupported &&
+                supportedTokens[token].withdrawable,
+            "Token not supported"
+        );
         require(amount > 0, "Amount must be greater than 0");
         require(
             amount <= totalDeposit[token],
@@ -435,7 +451,9 @@ contract Runesoul is Ownable2Step, AccessControl {
     ) external onlyOwner {
         pancakeSwapInfos[token] = PancakeSwapInfo({
             isSupported: true,
-            pairedToken: pairedToken
+            pairedToken: pairedToken,
+            buyFeePercent: 0,
+            buySupported: false
         });
 
         emit PancakeSwapInfoAdded(
@@ -451,7 +469,8 @@ contract Runesoul is Ownable2Step, AccessControl {
 
         supportedTokens[token] = TokenInfo({
             isSupported: true,
-            minDeposit: minDeposit
+            minDeposit: minDeposit,
+            withdrawable: true
         });
         tokenList.push(token);
 
@@ -475,26 +494,22 @@ contract Runesoul is Ownable2Step, AccessControl {
         emit TokenRemoved(msg.sender, token, block.timestamp);
     }
 
-    function userRemoveToken(address token) external payable {
-        require(msg.value == userTokenFee, "Must pay exact user token fee");
+    function setWithdrawable(
+        address token,
+        bool _withdrawable
+    ) external onlyOwner {
         require(supportedTokens[token].isSupported, "Token not supported");
+        supportedTokens[token].withdrawable = _withdrawable;
+    }
 
-        supportedTokens[token].isSupported = false;
-
-        // Remove from tokenList
-        for (uint256 i = 0; i < tokenList.length; i++) {
-            if (tokenList[i] == token) {
-                tokenList[i] = tokenList[tokenList.length - 1];
-                tokenList.pop();
-                break;
-            }
-        }
-
-        // Transfer fee to fee wallet
-        (bool success, ) = feeWallet.call{value: msg.value}("");
-        require(success, "Fee transfer failed");
-
-        emit UserTokenRemoved(msg.sender, token, msg.value, block.timestamp);
+    function setBuyFee(
+        address token,
+        bool _buySupported,
+        uint256 _buyFeePercent
+    ) external onlyOwner {
+        require(pancakeSwapInfos[token].isSupported, "Token not supported");
+        pancakeSwapInfos[token].buySupported = _buySupported;
+        pancakeSwapInfos[token].buyFeePercent = _buyFeePercent;
     }
 
     function setMinDeposit(
@@ -556,10 +571,43 @@ contract Runesoul is Ownable2Step, AccessControl {
         return tokenList;
     }
 
+    function buyToken(
+        address token,
+        uint256 amount,
+        uint256 deadline
+    ) external {
+        require(pancakeSwapInfos[token].isSupported, "Token not supported");
+        require(amount > 0, "Amount must be greater than 0");
+        require(pancakeSwapInfos[token].buyFeePercent > 0, "Buy fee not set");
+
+        uint buyFee = (pancakeSwapInfos[token].buyFeePercent * amount) / BPS;
+        uint swapAmount = amount - buyFee;
+        IERC20(token).safeTransferFrom(msg.sender, address(feeWallet), buyFee);
+        IERC20(token).safeTransferFrom(msg.sender, address(this), swapAmount);
+
+        address pairedToken = pancakeSwapInfos[token].pairedToken;
+        address[] memory path = new address[](2);
+        path[0] = token;
+        path[1] = pairedToken;
+
+        uint estAmountOut = pancakeRouter.getAmountsOut(swapAmount, path)[0];
+
+        uint[] memory amountOut = pancakeRouter.swapExactTokensForTokens(
+            swapAmount,
+            (estAmountOut * 95) / 100,
+            path,
+            address(this),
+            deadline
+        );
+
+        emit TokenBought(msg.sender, token, amountOut[0]);
+    }
+
     function mintPairedToken(
         address token,
         uint256 amount,
         uint256 deadline,
+        string memory signContext,
         bytes memory signature
     ) external returns (uint[] memory amounts) {
         require(pancakeSwapInfos[token].isSupported, "Token not supported");
@@ -567,6 +615,8 @@ contract Runesoul is Ownable2Step, AccessControl {
         require(amount > 0, "Amount must be greater than 0");
         require(amount <= getBalance(token), "Insufficient balance");
         require(deadline >= block.timestamp, "Signature expired");
+
+        require(!usedSignContexts[signContext], "Sign context already used");
 
         uint8 v;
         bytes32 r;
@@ -578,7 +628,7 @@ contract Runesoul is Ownable2Step, AccessControl {
         }
 
         bytes32 message = keccak256(
-            abi.encodePacked(msg.sender, token, amount, deadline)
+            abi.encodePacked(msg.sender, token, amount, signContext, deadline)
         );
         bytes32 ethSignedMessageHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", message)
@@ -588,6 +638,7 @@ contract Runesoul is Ownable2Step, AccessControl {
             "Invalid oracle signature"
         );
 
+        usedSignContexts[signContext] = true;
         address pairedToken = pancakeSwapInfos[token].pairedToken;
         address[] memory path = new address[](2);
         path[0] = token;
@@ -606,6 +657,7 @@ contract Runesoul is Ownable2Step, AccessControl {
             amount,
             pairedToken,
             amountOut[0],
+            signContext,
             signature
         );
         return amountOut;
@@ -615,6 +667,7 @@ contract Runesoul is Ownable2Step, AccessControl {
         address token,
         uint256 amount,
         uint256 deadline,
+        string memory signContext,
         bytes memory signature
     ) external returns (uint[] memory amounts) {
         require(pancakeSwapInfos[token].isSupported, "Token not supported");
@@ -622,6 +675,8 @@ contract Runesoul is Ownable2Step, AccessControl {
         require(amount > 0, "Amount must be greater than 0");
         require(amount <= getBalance(token), "Insufficient balance");
         require(deadline >= block.timestamp, "Signature expired");
+
+        require(!usedSignContexts[signContext], "Sign context already used");
 
         uint8 v;
         bytes32 r;
@@ -633,7 +688,7 @@ contract Runesoul is Ownable2Step, AccessControl {
         }
 
         bytes32 message = keccak256(
-            abi.encodePacked(msg.sender, token, amount, deadline)
+            abi.encodePacked(msg.sender, token, amount, signContext, deadline)
         );
         bytes32 ethSignedMessageHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", message)
@@ -642,7 +697,7 @@ contract Runesoul is Ownable2Step, AccessControl {
             oracle == ecrecover(ethSignedMessageHash, v, r, s),
             "Invalid oracle signature"
         );
-
+        usedSignContexts[signContext] = true;
         address pairedToken = pancakeSwapInfos[token].pairedToken;
 
         address[] memory path = new address[](2);
@@ -657,13 +712,14 @@ contract Runesoul is Ownable2Step, AccessControl {
             deadline
         );
 
+        path[0] = pairedToken;
+        path[1] = token;
+
         uint estAmountOut = pancakeRouter.getAmountsOut(
             amountPairedOut[0] / 2,
             path
         )[0];
 
-        path[0] = pairedToken;
-        path[1] = token;
         uint[] memory amountOut = pancakeRouter.swapExactTokensForTokens(
             amountPairedOut[0] / 2,
             (estAmountOut * 70) / 100,
@@ -674,9 +730,10 @@ contract Runesoul is Ownable2Step, AccessControl {
         emit PairedTokenRewardsClaimed(
             msg.sender,
             token,
-            amountOut[0],
+            amountOut[0] - amountOut[0] / 2,
             pairedToken,
             amountPairedOut[0],
+            signContext,
             signature
         );
         return amountOut;
