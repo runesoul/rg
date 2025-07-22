@@ -126,6 +126,8 @@ event PairedTokenRewardsClaimed(
 event TokenBought(
     address indexed user,
     address indexed token,
+    uint256 amountIn,
+    address outTokenAddress,
     uint256 tokenAmountOut
 );
 
@@ -590,8 +592,9 @@ contract Runesoul is Ownable2Step, AccessControl {
         path[0] = token;
         path[1] = pairedToken;
 
-        uint estAmountOut = pancakeRouter.getAmountsOut(swapAmount, path)[0];
+        uint estAmountOut = pancakeRouter.getAmountsOut(swapAmount, path)[1];
 
+        IERC20(token).approve(address(pancakeRouter), swapAmount);
         uint[] memory amountOut = pancakeRouter.swapExactTokensForTokens(
             swapAmount,
             (estAmountOut * 95) / 100,
@@ -600,7 +603,7 @@ contract Runesoul is Ownable2Step, AccessControl {
             deadline
         );
 
-        emit TokenBought(msg.sender, token, amountOut[0]);
+        emit TokenBought(msg.sender, token, amount, pairedToken, amountOut[1]);
     }
 
     function mintPairedToken(
@@ -644,6 +647,7 @@ contract Runesoul is Ownable2Step, AccessControl {
         path[0] = token;
         path[1] = pairedToken;
 
+        IERC20(token).approve(address(pancakeRouter), amount);
         uint[] memory amountOut = pancakeRouter.swapExactTokensForTokens(
             amount,
             0,
@@ -656,7 +660,7 @@ contract Runesoul is Ownable2Step, AccessControl {
             token,
             amount,
             pairedToken,
-            amountOut[0],
+            amountOut[1],
             signContext,
             signature
         );
@@ -704,6 +708,7 @@ contract Runesoul is Ownable2Step, AccessControl {
         path[0] = token;
         path[1] = pairedToken;
 
+        IERC20(token).approve(address(pancakeRouter), amount);
         uint[] memory amountPairedOut = pancakeRouter.swapExactTokensForTokens(
             amount,
             0,
@@ -716,12 +721,17 @@ contract Runesoul is Ownable2Step, AccessControl {
         path[1] = token;
 
         uint estAmountOut = pancakeRouter.getAmountsOut(
-            amountPairedOut[0] / 2,
+            amountPairedOut[1] / 2,
             path
-        )[0];
+        )[1];
+
+        IERC20(pairedToken).approve(
+            address(pancakeRouter),
+            amountPairedOut[1] / 2
+        );
 
         uint[] memory amountOut = pancakeRouter.swapExactTokensForTokens(
-            amountPairedOut[0] / 2,
+            amountPairedOut[1] / 2,
             (estAmountOut * 70) / 100,
             path,
             address(this),
@@ -730,9 +740,9 @@ contract Runesoul is Ownable2Step, AccessControl {
         emit PairedTokenRewardsClaimed(
             msg.sender,
             token,
-            amountOut[0] - amountOut[0] / 2,
+            amountOut[1] - amountOut[1] / 2,
             pairedToken,
-            amountPairedOut[0],
+            amountPairedOut[1],
             signContext,
             signature
         );
