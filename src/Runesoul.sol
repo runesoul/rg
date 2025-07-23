@@ -143,6 +143,13 @@ interface IPancakeRouter {
         address to,
         uint deadline
     ) external returns (uint[] memory amounts);
+    function swapTokensForExactTokens(
+        uint amountOut,
+        uint amountInMax,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts);
 }
 
 contract Runesoul is Ownable2Step, AccessControl {
@@ -709,44 +716,43 @@ contract Runesoul is Ownable2Step, AccessControl {
         path[1] = pairedToken;
 
         IERC20(token).approve(address(pancakeRouter), amount);
+
+        uint256 keepTokenAmount = amount / 2;
         uint[] memory amountPairedOut = pancakeRouter.swapExactTokensForTokens(
-            amount,
+            amount - keepTokenAmount,
             0,
             path,
             address(this),
             deadline
         );
 
-        path[0] = pairedToken;
-        path[1] = token;
+        // path[0] = pairedToken;
+        // path[1] = token;
 
-        uint estAmountOut = pancakeRouter.getAmountsOut(
-            amountPairedOut[1] / 2,
-            path
-        )[1];
+        // uint estAmountOut = pancakeRouter.getAmountsOut(
+        //     amountPairedOut[1] / 2,
+        //     path
+        // )[1];
 
-        IERC20(pairedToken).approve(
-            address(pancakeRouter),
-            amountPairedOut[1] / 2
-        );
+        // IERC20(pairedToken).approve(address(pancakeRouter), amountPairedOut[1]);
 
-        uint[] memory amountOut = pancakeRouter.swapExactTokensForTokens(
-            amountPairedOut[1] / 2,
-            (estAmountOut * 70) / 100,
-            path,
-            address(this),
-            deadline
-        );
+        // uint[] memory amountOut = pancakeRouter.swapTokensForExactTokens(
+        //     (estAmountOut * 85) / 100,
+        //     (amountPairedOut[1] * 2) / 3,
+        //     path,
+        //     address(this),
+        //     deadline
+        // );
         emit PairedTokenRewardsClaimed(
             msg.sender,
             token,
-            amountOut[1] - amountOut[1] / 2,
+            keepTokenAmount,
             pairedToken,
             amountPairedOut[1],
             signContext,
             signature
         );
-        return amountOut;
+        return amountPairedOut;
     }
 
     function getTokenInfo(
