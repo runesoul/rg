@@ -128,7 +128,9 @@ event TokenBought(
     address indexed token,
     uint256 amountIn,
     address outTokenAddress,
-    uint256 tokenAmountOut
+    uint256 tokenAmountOut,
+    string signContext,
+    bytes signature
 );
 
 interface IPancakeRouter {
@@ -583,11 +585,37 @@ contract Runesoul is Ownable2Step, AccessControl {
     function buyToken(
         address token,
         uint256 amount,
-        uint256 deadline
+        uint256 deadline,
+        string memory signContext,
+        bytes memory signature
     ) external {
         require(pancakeSwapInfos[token].isSupported, "Token not supported");
         require(amount > 0, "Amount must be greater than 0");
         require(pancakeSwapInfos[token].buyFeePercent > 0, "Buy fee not set");
+
+        require(!usedSignContexts[signContext], "Sign context already used");
+
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+        assembly {
+            r := mload(add(signature, 32))
+            s := mload(add(signature, 64))
+            v := byte(0, mload(add(signature, 96)))
+        }
+
+        bytes32 message = keccak256(
+            abi.encodePacked(msg.sender, token, amount, signContext, deadline)
+        );
+        bytes32 ethSignedMessageHash = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", message)
+        );
+        require(
+            oracle == ecrecover(ethSignedMessageHash, v, r, s),
+            "Invalid oracle signature"
+        );
+
+        usedSignContexts[signContext] = true;
 
         uint buyFee = (pancakeSwapInfos[token].buyFeePercent * amount) / BPS;
         uint swapAmount = amount - buyFee;
@@ -610,7 +638,15 @@ contract Runesoul is Ownable2Step, AccessControl {
             deadline
         );
 
-        emit TokenBought(msg.sender, token, amount, pairedToken, amountOut[1]);
+        emit TokenBought(
+            msg.sender,
+            token,
+            amount,
+            pairedToken,
+            amountOut[1],
+            signContext,
+            signature
+        );
     }
 
     function mintPairedToken(
