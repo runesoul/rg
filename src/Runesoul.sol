@@ -143,13 +143,13 @@ interface IPancakeRouter {
         address to,
         uint deadline
     ) external returns (uint[] memory amounts);
-    function swapTokensForExactTokens(
-        uint amountOut,
-        uint amountInMax,
+    function swapExactTokensForTokensSupportingFeeOnTransferTokens(
+        uint amountIn,
+        uint amountOutMin,
         address[] calldata path,
         address to,
         uint deadline
-    ) external returns (uint[] memory amounts);
+    ) external;
 }
 
 contract Runesoul is Ownable2Step, AccessControl {
@@ -619,7 +619,7 @@ contract Runesoul is Ownable2Step, AccessControl {
         uint256 deadline,
         string memory signContext,
         bytes memory signature
-    ) external returns (uint[] memory amounts) {
+    ) external returns (uint) {
         require(pancakeSwapInfos[token].isSupported, "Token not supported");
 
         require(amount > 0, "Amount must be greater than 0");
@@ -655,19 +655,22 @@ contract Runesoul is Ownable2Step, AccessControl {
         path[1] = pairedToken;
 
         IERC20(token).approve(address(pancakeRouter), amount);
-        uint[] memory amountOut = pancakeRouter.swapExactTokensForTokens(
+        uint originAmount = IERC20(pairedToken).balanceOf(address(this));
+        pancakeRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
             amount,
             0,
             path,
             address(this),
             deadline
         );
+        uint amountOut = IERC20(pairedToken).balanceOf(address(this)) -
+            originAmount;
         emit PairedTokenMinted(
             msg.sender,
             token,
             amount,
             pairedToken,
-            amountOut[1],
+            amountOut,
             signContext,
             signature
         );
@@ -717,42 +720,54 @@ contract Runesoul is Ownable2Step, AccessControl {
 
         IERC20(token).approve(address(pancakeRouter), amount);
 
-        uint256 keepTokenAmount = amount / 2;
-        uint[] memory amountPairedOut = pancakeRouter.swapExactTokensForTokens(
-            amount - keepTokenAmount,
+        uint originPairedAmount = IERC20(pairedToken).balanceOf(address(this));
+        pancakeRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            amount,
             0,
             path,
             address(this),
             deadline
         );
+        uint amountPairedOut = IERC20(pairedToken).balanceOf(address(this)) -
+            originPairedAmount;
 
-        // path[0] = pairedToken;
-        // path[1] = token;
+        path[0] = pairedToken;
+        path[1] = token;
 
-        // uint estAmountOut = pancakeRouter.getAmountsOut(
-        //     amountPairedOut[1] / 2,
-        //     path
-        // )[1];
+        uint estAmountOut = pancakeRouter.getAmountsOut(
+            amountPairedOut / 2,
+            path
+        )[1];
 
-        // IERC20(pairedToken).approve(address(pancakeRouter), amountPairedOut[1]);
+        IERC20(pairedToken).approve(
+            address(pancakeRouter),
+            amountPairedOut / 2
+        );
 
-        // uint[] memory amountOut = pancakeRouter.swapTokensForExactTokens(
-        //     (estAmountOut * 85) / 100,
-        //     (amountPairedOut[1] * 2) / 3,
-        //     path,
-        //     address(this),
-        //     deadline
-        // );
+        uint originAmount = IERC20(token).balanceOf(address(this));
+        pancakeRouter.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            amountPairedOut / 2,
+            (estAmountOut * 8) / 10,
+            path,
+            address(this),
+            deadline
+        );
+        uint amountOut = IERC20(token).balanceOf(address(this)) - originAmount;
+
         emit PairedTokenRewardsClaimed(
             msg.sender,
             token,
-            keepTokenAmount,
+            amountOut,
             pairedToken,
-            amountPairedOut[1],
+            amountPairedOut - amountPairedOut / 2,
             signContext,
             signature
         );
-        return amountPairedOut;
+
+        uint[] memory amountsOut = new uint[](2);
+        amountsOut[0] = amountOut;
+        amountsOut[1] = amountPairedOut - amountPairedOut / 2;
+        return amountsOut;
     }
 
     function getTokenInfo(

@@ -22,6 +22,10 @@ contract RUC {
     uint8 public decimals = 18;
     uint256 public totalSupply = 1000000000000 * 10 ** uint256(decimals);
 
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+    uint256 private _status;
+
     address public owner;
     address public taxWallet;
     address public pancakePair;
@@ -57,10 +61,26 @@ contract RUC {
         _;
     }
 
+    modifier nonReentrant() {
+        // On the first call to nonReentrant, _notEntered will be true
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+
+        // Any calls to nonReentrant after this point will fail
+        _status = _ENTERED;
+
+        _;
+
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _status = _NOT_ENTERED;
+    }
+
     constructor(address _router, address rgToken) {
         owner = msg.sender;
         taxWallet = msg.sender;
         router = IPancakeRouter(_router);
+
+        _status = _NOT_ENTERED;
 
         balanceOf[msg.sender] = totalSupply;
         emit Transfer(address(0), msg.sender, totalSupply);
@@ -72,11 +92,17 @@ contract RUC {
         pancakePair = _pair;
     }
 
-    function transfer(address to, uint256 value) public returns (bool) {
+    function transfer(
+        address to,
+        uint256 value
+    ) public nonReentrant returns (bool) {
         return _transfer(msg.sender, to, value);
     }
 
-    function approve(address spender, uint256 value) public returns (bool) {
+    function approve(
+        address spender,
+        uint256 value
+    ) public nonReentrant returns (bool) {
         allowance[msg.sender][spender] = value;
         emit Approval(msg.sender, spender, value);
         return true;
@@ -86,7 +112,7 @@ contract RUC {
         address from,
         address to,
         uint256 value
-    ) public returns (bool) {
+    ) public nonReentrant returns (bool) {
         require(allowance[from][msg.sender] >= value, "Allowance exceeded");
         allowance[from][msg.sender] -= value;
         return _transfer(from, to, value);
@@ -163,15 +189,6 @@ contract RUC {
         _burn(pancakePair, burnAmount);
         IPancakePair(pancakePair).sync();
         emit PoolDeflated(burnAmount, block.timestamp);
-        return true;
-    }
-
-    function burn(uint256 amount) external returns (bool) {
-        require(amount > 0, "Burn amount too small");
-        uint256 accountBalance = balanceOf[msg.sender];
-        require(accountBalance > amount, "No tokens to burn");
-
-        _burn(msg.sender, amount);
         return true;
     }
 
